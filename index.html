@@ -1,0 +1,906 @@
+<!DOCTYPE html>
+<!--
+  file: index.html
+  version: 1.1
+  author: Samuel Cao
+  created: 2026-09-06
+  last_updated: 2026-09-06
+  description: Interactive SF Bay Trail completion map. Mark segments travelled, see how much of the Bay Trail is done.
+  ai_update: Update last_updated and version in this block (the filename is fixed, GitHub Pages requires index.html). Append a changelog comment at the bottom.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bay Trail Progress</title>
+<link rel="stylesheet" href="vendor/leaflet.css">
+<style>
+:root {
+  color-scheme: light;
+  --surface:        #fcfcfb;
+  --surface-2:      #f2f1ed;
+  --surface-3:      #e6e5df;
+  --border:         #d8d7d0;
+  --text-primary:   #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted:     #78766f;
+
+  --done:      #0ca30c;
+  --undone:    #9a9a94;
+  --notbuilt:  #c4c3bc;
+  --skipped:   #bdb6a6;
+
+  --mode-foot: #2a78d6;
+  --mode-bike: #eb6834;
+  --mode-both: #1baf7a;
+
+  --seq-1: #cde2fb;
+  --seq-2: #9ec5f4;
+  --seq-3: #5598e7;
+  --seq-4: #2a78d6;
+  --seq-5: #184f95;
+  --undated: #a89f8c;
+
+  --accent: #2a78d6;
+  --shadow: 0 1px 3px rgba(0,0,0,.10), 0 6px 20px rgba(0,0,0,.06);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --surface:        #1a1a19;
+    --surface-2:      #232322;
+    --surface-3:      #2e2e2c;
+    --border:         #3a3a37;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #8d8c83;
+
+    --done:      #0ca30c;
+    --undone:    #6a6a64;
+    --notbuilt:  #454540;
+    --skipped:   #56503f;
+
+    --mode-foot: #3987e5;
+    --mode-bike: #d95926;
+    --mode-both: #199e70;
+
+    --seq-1: #184f95;
+    --seq-2: #256abf;
+    --seq-3: #3987e5;
+    --seq-4: #6da7ec;
+    --seq-5: #b7d3f6;
+    --undated: #7d7565;
+
+    --accent: #3987e5;
+    --shadow: 0 1px 3px rgba(0,0,0,.5), 0 6px 20px rgba(0,0,0,.35);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --surface:#1a1a19; --surface-2:#232322; --surface-3:#2e2e2c; --border:#3a3a37;
+  --text-primary:#ffffff; --text-secondary:#c3c2b7; --text-muted:#8d8c83;
+  --done:#0ca30c; --undone:#6a6a64; --notbuilt:#454540; --skipped:#56503f;
+  --mode-foot:#3987e5; --mode-bike:#d95926; --mode-both:#199e70;
+  --seq-1:#184f95; --seq-2:#256abf; --seq-3:#3987e5; --seq-4:#6da7ec; --seq-5:#b7d3f6;
+  --undated:#7d7565; --accent:#3987e5;
+  --shadow: 0 1px 3px rgba(0,0,0,.5), 0 6px 20px rgba(0,0,0,.35);
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: var(--surface);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+}
+button, select, input, textarea { font: inherit; color: inherit; }
+
+#app { display: grid; grid-template-columns: 380px 1fr; height: 100vh; }
+#sidebar {
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  display: flex; flex-direction: column;
+}
+#map { height: 100%; background: var(--surface-2); }
+
+/* ---------- header + hero ---------- */
+.pad { padding: 18px 20px; }
+.head { border-bottom: 1px solid var(--border); }
+.head h1 { margin: 0 0 2px; font-size: 15px; font-weight: 650; letter-spacing: -.01em; }
+.head .sub { color: var(--text-muted); font-size: 12px; }
+
+.hero { padding: 20px; border-bottom: 1px solid var(--border); }
+.hero-num {
+  font-size: 46px; line-height: 1; font-weight: 300; letter-spacing: -.03em;
+  font-variant-numeric: tabular-nums;
+}
+.hero-num small { font-size: 22px; font-weight: 400; color: var(--text-secondary); }
+.hero-label { color: var(--text-secondary); font-size: 13px; margin-top: 6px; }
+.hero-bar {
+  height: 8px; background: var(--surface-3); border-radius: 4px;
+  margin-top: 12px; overflow: hidden;
+}
+.hero-bar > i { display: block; height: 100%; background: var(--done); border-radius: 4px; transition: width .3s; }
+
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 16px; margin-top: 18px; }
+.stat .v { font-size: 17px; font-weight: 550; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+.stat .k { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; margin-top: 1px; }
+
+/* ---------- controls ---------- */
+.sec { border-bottom: 1px solid var(--border); padding: 16px 20px; }
+.sec h2 {
+  margin: 0 0 10px; font-size: 11px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: .06em; color: var(--text-muted);
+}
+.segbtns { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+.segbtns button {
+  padding: 7px 8px; border: 1px solid var(--border); background: var(--surface);
+  border-radius: 7px; cursor: pointer; font-size: 12.5px; text-align: center;
+}
+.segbtns button:hover { background: var(--surface-2); }
+.segbtns button[aria-pressed="true"] {
+  background: var(--text-primary); color: var(--surface); border-color: var(--text-primary);
+}
+
+.legend { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
+.legend .row { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-secondary); }
+.legend .sw { width: 22px; height: 4px; border-radius: 2px; flex: none; }
+.legend .sw.dash {
+  height: 0; border-top: 4px dotted currentColor; border-radius: 0; background: none !important;
+}
+.legend .ct { margin-left: auto; color: var(--text-muted); font-variant-numeric: tabular-nums; font-size: 11.5px; }
+
+label.chk { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-secondary); cursor: pointer; }
+label.chk + label.chk { margin-top: 6px; }
+label.chk .mi { margin-left: auto; color: var(--text-muted); font-variant-numeric: tabular-nums; font-size: 11.5px; }
+label.chk input { accent-color: var(--accent); }
+
+/* ---------- county bars ---------- */
+.county { display: flex; align-items: center; gap: 10px; margin-bottom: 7px; font-size: 12.5px; }
+.county .nm { width: 92px; flex: none; color: var(--text-secondary); }
+.county .tr { flex: 1; height: 7px; background: var(--surface-3); border-radius: 3.5px; overflow: hidden; }
+.county .tr > i { display: block; height: 100%; background: var(--seq-4); border-radius: 3.5px; transition: width .3s; }
+.county .pc { width: 36px; text-align: right; color: var(--text-muted); font-variant-numeric: tabular-nums; font-size: 11.5px; }
+
+/* ---------- checklist ---------- */
+#listWrap { flex: 1; min-height: 220px; }
+#search {
+  width: 100%; padding: 7px 10px; border: 1px solid var(--border);
+  border-radius: 7px; background: var(--surface-2); margin-bottom: 10px;
+}
+.grp { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted);
+       margin: 14px 0 5px; font-weight: 600; }
+.item {
+  display: flex; align-items: center; gap: 9px; padding: 5px 7px; border-radius: 6px;
+  cursor: pointer; font-size: 12.5px;
+}
+.item:hover { background: var(--surface-2); }
+.item .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--undone); }
+.item.on .dot { background: var(--done); }
+.item .t { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.item .mi { color: var(--text-muted); font-variant-numeric: tabular-nums; font-size: 11.5px; }
+.item.prop .t { color: var(--text-muted); font-style: italic; }
+.item.skip .t { color: var(--text-muted); text-decoration: line-through; }
+.item.skip .dot { background: var(--skipped); }
+
+/* ---------- entry panel ---------- */
+#panel {
+  position: absolute; right: 16px; top: 16px; width: 310px; z-index: 1000;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  box-shadow: var(--shadow); padding: 16px; display: none;
+}
+#panel.open { display: block; }
+#panel h3 { margin: 0 0 3px; font-size: 14px; font-weight: 600; }
+#panel .meta { font-size: 12px; color: var(--text-muted); margin-bottom: 13px; }
+#panel .tags { display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 13px; }
+.tag {
+  font-size: 10.5px; padding: 2px 7px; border-radius: 20px;
+  background: var(--surface-3); color: var(--text-secondary);
+}
+#panel label.fl { display: block; font-size: 11px; text-transform: uppercase;
+  letter-spacing: .05em; color: var(--text-muted); margin: 11px 0 4px; font-weight: 600; }
+#panel select, #panel input[type=date], #panel textarea {
+  width: 100%; padding: 7px 9px; border: 1px solid var(--border);
+  border-radius: 7px; background: var(--surface-2);
+}
+#panel textarea { resize: vertical; min-height: 46px; }
+.btn {
+  padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--surface); cursor: pointer; font-size: 13px;
+}
+.btn:hover { background: var(--surface-2); }
+.btn.pri { background: var(--text-primary); color: var(--surface); border-color: var(--text-primary); }
+.btn.pri:hover { opacity: .88; }
+.btn.sm { padding: 4px 8px; font-size: 11.5px; }
+.rowbtns { display: flex; gap: 7px; margin-top: 14px; }
+.rec {
+  display: flex; align-items: center; gap: 8px; padding: 6px 0;
+  border-top: 1px solid var(--border); font-size: 12.5px;
+}
+.rec .sw { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.rec .d { flex: 1; color: var(--text-secondary); }
+
+.foot { padding: 12px 20px 18px; font-size: 11px; color: var(--text-muted); line-height: 1.45; }
+.foot a { color: var(--text-muted); }
+
+.leaflet-container { background: var(--surface-2); font: inherit; }
+.credit {
+  position: absolute; left: 10px; bottom: 10px; z-index: 800;
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 4px 8px; font-size: 10.5px; color: var(--text-muted);
+}
+
+@media (max-width: 860px) {
+  #app { grid-template-columns: 1fr; grid-template-rows: 52vh 1fr; }
+  #sidebar { border-right: none; border-top: 1px solid var(--border); order: 2; }
+  #map { order: 1; }
+  #panel { right: 8px; top: 8px; width: calc(100% - 16px); max-width: 320px; }
+}
+</style>
+</head>
+<body>
+
+<div id="app">
+  <aside id="sidebar">
+    <div class="pad head">
+      <h1>Bay Trail Progress</h1>
+      <div class="sub">San Francisco Bay Trail, spine alignment</div>
+    </div>
+
+    <div class="hero">
+      <div class="hero-num" id="heroNum">0<small>%</small></div>
+      <div class="hero-label" id="heroLabel">of the existing Bay Trail</div>
+      <div class="hero-bar"><i id="heroBar" style="width:0%"></i></div>
+      <div style="font-size:11.5px;color:var(--text-muted);margin-top:7px" id="heroSub"></div>
+      <div class="grid2">
+        <div class="stat"><div class="v" id="sMiles">0</div><div class="k">Miles done</div></div>
+        <div class="stat"><div class="v" id="sLeft">0</div><div class="k">Miles to go</div></div>
+        <div class="stat"><div class="v" id="sSegs">0</div><div class="k">Segments done</div></div>
+        <div class="stat"><div class="v" id="sSkipped">0</div><div class="k">Miles skipped</div></div>
+      </div>
+    </div>
+
+    <div class="sec">
+      <h2>Colour by</h2>
+      <div class="segbtns" id="viewBtns">
+        <button data-view="completion" aria-pressed="true">Completion</button>
+        <button data-view="mode" aria-pressed="false">Travel mode</button>
+        <button data-view="recency" aria-pressed="false">Recency</button>
+        <button data-view="county" aria-pressed="false">By county</button>
+      </div>
+      <div class="legend" id="legend"></div>
+    </div>
+
+    <div class="sec">
+      <h2>Facility types to count</h2>
+      <div id="facilities"></div>
+      <div style="margin-top:8px;font-size:11.5px;color:var(--text-muted);line-height:1.45">
+        Caltrans bikeway classes. Class I is a separated shared-use path in its own
+        right of way; II is a striped lane on a road; III is a signed route sharing
+        the lane; IV is barrier-protected but still in the road corridor.
+      </div>
+    </div>
+
+    <div class="sec">
+      <h2>Options</h2>
+      <label class="chk"><input type="checkbox" id="optOnStreet" checked>
+        Count on-street sections<span id="onStreetMi"></span></label>
+      <label class="chk" style="margin-top:7px"><input type="checkbox" id="optProposed" checked>
+        Show not-yet-built trail</label>
+      <label class="chk" style="margin-top:7px"><input type="checkbox" id="optHideSkipped" checked>
+        Leave skipped sections out of the total</label>
+      <div class="rowbtns">
+        <button class="btn sm" id="btnSkipOnStreet">Skip all on-street</button>
+        <button class="btn sm" id="btnClearSkips">Clear skips</button>
+      </div>
+      <div style="margin-top:8px;font-size:11.5px;color:var(--text-muted);line-height:1.45">
+        On-street means a road corridor (Caltrans Class II, III or IV), not a judgement
+        about scenery. Skip in bulk, then un-skip the ones worth walking.
+      </div>
+    </div>
+
+    <div class="sec">
+      <h2>By county</h2>
+      <div id="counties"></div>
+    </div>
+
+    <div class="sec" id="listWrap">
+      <h2>Segments</h2>
+      <input id="search" type="search" placeholder="Search city or county…">
+      <div id="list"></div>
+    </div>
+
+    <div class="sec">
+      <h2>Your record</h2>
+      <div class="rowbtns" style="margin-top:0">
+        <button class="btn" id="btnExport">Export JSON</button>
+        <button class="btn" id="btnImport">Import</button>
+      </div>
+      <input type="file" id="fileIn" accept="application/json" hidden>
+      <div style="margin-top:9px;font-size:11.5px;color:var(--text-muted)" id="saveState">
+        Saved in this browser.
+      </div>
+    </div>
+
+    <div class="foot">
+      Trail geometry: Metropolitan Transportation Commission, San Francisco Bay Trail.
+      Provided for planning purposes only, as-is, with no warranty as to completeness,
+      currentness or accuracy.
+      <span id="snapNote"></span>
+    </div>
+  </aside>
+
+  <div style="position:relative">
+    <div id="map"></div>
+    <div class="credit">Trail data: MTC · Basemap: CARTO / OpenStreetMap</div>
+    <div id="panel">
+      <h3 id="pTitle"></h3>
+      <div class="meta" id="pMeta"></div>
+      <div class="tags" id="pTags"></div>
+      <div id="pRecords"></div>
+      <div id="pForm">
+        <label class="fl" for="fMode">How did you travel it</label>
+        <select id="fMode">
+          <option value="foot">On foot</option>
+          <option value="bike">By bike</option>
+          <option value="other">Other</option>
+        </select>
+        <label class="fl" for="fDate">When (optional)</label>
+        <input type="date" id="fDate">
+        <label class="fl" for="fNotes">Notes (optional)</label>
+        <textarea id="fNotes" placeholder="Parked at the marina, walked north…"></textarea>
+        <div class="rowbtns">
+          <button class="btn pri" id="btnSave">Mark travelled</button>
+          <button class="btn" id="btnSkip">Skip this</button>
+          <button class="btn" id="btnClose">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="vendor/leaflet.js"></script>
+<script src="data/segments.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  var DATA = window.BAY_TRAIL_DATA;
+  var SEGMENTS = DATA.segments;
+  var SNAPSHOT = DATA._metadata.snapshot;
+  var STORE_KEY = "bayTrailRecords_v1";
+  var M_PER_MILE = 1609.344;
+
+  var byId = {};
+  SEGMENTS.forEach(function (s) { byId[s.id] = s; });
+
+  // ---------------------------------------------------------------- storage
+  // localStorage is scratch in front of the exported JSON, which is the real
+  // record. Every accessor is guarded: private windows and blocked site data
+  // throw on access rather than returning empty.
+  var records = [];
+  // Per-segment personal judgement, kept separate from travel records because
+  // it says what you intend, not what you did. MTC's on-street flag describes
+  // the road engineering; this describes whether it is worth your legs.
+  var flags = {};
+
+  function load() {
+    try {
+      var raw = localStorage.getItem(STORE_KEY);
+      if (raw) {
+        var parsed = JSON.parse(raw);
+        records = parsed.records || [];
+        flags = parsed.flags || {};
+      }
+    } catch (e) { records = []; flags = {}; }
+  }
+  function save() {
+    try {
+      localStorage.setItem(STORE_KEY, JSON.stringify({ records: records, flags: flags }));
+      setSaveState("Saved in this browser · " + records.length + " entries");
+    } catch (e) {
+      setSaveState("Could not save locally. Export to keep your record.");
+    }
+  }
+  function setSaveState(t) { document.getElementById("saveState").textContent = t; }
+
+  // ------------------------------------------------------------ derived state
+  // Records are stored span-shaped (startM/endM) even though v1 only ever
+  // writes whole segments. Partial entry later needs no migration.
+  var bySeg = {};
+  function reindex() {
+    bySeg = {};
+    records.forEach(function (r) { (bySeg[r.segId] = bySeg[r.segId] || []).push(r); });
+  }
+  function done(s) { return !!bySeg[s.id]; }
+  function modesOf(s) {
+    var m = {};
+    (bySeg[s.id] || []).forEach(function (r) { m[r.mode] = true; });
+    return m;
+  }
+  function lastDate(s) {
+    var best = null;
+    (bySeg[s.id] || []).forEach(function (r) {
+      if (r.date && (!best || r.date > best)) best = r.date;
+    });
+    return best;
+  }
+
+  function skipped(s) { return !!(flags[s.id] && flags[s.id].skip); }
+
+  function counted(s) {
+    if (s.status !== "existing") return false;
+    if (facilityOn[facilityKey(s)] === false) return false;
+    if (!optOnStreet.checked && s.onStreet) return false;
+    if (optHideSkipped.checked && skipped(s)) return false;
+    return true;
+  }
+
+  function totals() {
+    var t = { mi: 0, doneMi: 0, segs: 0, doneSegs: 0, planned: 0, skipMi: 0, byCounty: {} };
+    SEGMENTS.forEach(function (s) {
+      t.planned += s.miles;
+      if (s.status === "existing" && skipped(s)) t.skipMi += s.miles;
+      if (!counted(s)) return;
+      t.mi += s.miles; t.segs++;
+      var c = t.byCounty[s.county] || (t.byCounty[s.county] = { mi: 0, done: 0 });
+      c.mi += s.miles;
+      if (done(s)) { t.doneMi += s.miles; t.doneSegs++; c.done += s.miles; }
+    });
+    return t;
+  }
+
+  // ------------------------------------------------------------------- colour
+  function css(v) { return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+
+  var VIEW = "completion";
+
+  function yearsAgo(iso) {
+    var d = new Date(iso + "T00:00:00");
+    return (Date.now() - d.getTime()) / (365.25 * 24 * 3600 * 1000);
+  }
+
+  function colorFor(s) {
+    if (s.status !== "existing") return css("--notbuilt");
+    if (skipped(s) && !done(s)) return css("--skipped");
+    if (VIEW === "completion") return done(s) ? css("--done") : css("--undone");
+    if (VIEW === "mode") {
+      var m = modesOf(s), n = Object.keys(m).length;
+      if (!n) return css("--undone");
+      if (n > 1) return css("--mode-both");
+      if (m.foot) return css("--mode-foot");
+      if (m.bike) return css("--mode-bike");
+      return css("--mode-both");
+    }
+    if (VIEW === "recency") {
+      if (!done(s)) return css("--undone");
+      var d = lastDate(s);
+      if (!d) return css("--undated");
+      var y = yearsAgo(d);
+      if (y < 1) return css("--seq-5");
+      if (y < 3) return css("--seq-4");
+      if (y < 6) return css("--seq-3");
+      if (y < 10) return css("--seq-2");
+      return css("--seq-1");
+    }
+    if (VIEW === "county") {
+      var t = totals().byCounty[s.county];
+      var pc = t && t.mi ? t.done / t.mi : 0;
+      if (!counted(s)) return css("--undone");
+      if (pc >= 0.8) return css("--seq-5");
+      if (pc >= 0.5) return css("--seq-4");
+      if (pc >= 0.25) return css("--seq-3");
+      if (pc > 0.01) return css("--seq-2");
+      return css("--seq-1");
+    }
+    return css("--undone");
+  }
+
+  var LEGENDS = {
+    completion: function () {
+      var t = totals();
+      var rows = [
+        { c: "--done", l: "Travelled", n: plural(t.doneSegs, "seg") },
+        { c: "--undone", l: "Not yet", n: plural(t.segs - t.doneSegs, "seg") }
+      ];
+      if (t.skipMi > 0) rows.push({ c: "--skipped", l: "Skipping", n: t.skipMi.toFixed(1) + " mi", dash: true });
+      rows.push({ c: "--notbuilt", l: "Not built yet", dash: true });
+      return rows;
+    },
+    mode: function () {
+      return [
+        { c: "--mode-foot", l: "On foot" },
+        { c: "--mode-bike", l: "By bike" },
+        { c: "--mode-both", l: "Both / other" },
+        { c: "--undone", l: "Not yet" },
+        { c: "--notbuilt", l: "Not built yet", dash: true }
+      ];
+    },
+    recency: function () {
+      return [
+        { c: "--seq-5", l: "Within a year" },
+        { c: "--seq-4", l: "1 to 3 years" },
+        { c: "--seq-3", l: "3 to 6 years" },
+        { c: "--seq-2", l: "6 to 10 years" },
+        { c: "--seq-1", l: "Over 10 years" },
+        { c: "--undated", l: "Date unknown" },
+        { c: "--undone", l: "Not yet" }
+      ];
+    },
+    county: function () {
+      return [
+        { c: "--seq-5", l: "80% or more done" },
+        { c: "--seq-4", l: "50 to 80%" },
+        { c: "--seq-3", l: "25 to 50%" },
+        { c: "--seq-2", l: "Under 25%" },
+        { c: "--seq-1", l: "Not started" }
+      ];
+    }
+  };
+
+  function plural(n, word) { return n + " " + word + (n === 1 ? "" : "s"); }
+
+  function drawLegend() {
+    var rows = LEGENDS[VIEW]();
+    document.getElementById("legend").innerHTML = rows.map(function (r) {
+      var sw = r.dash
+        ? '<span class="sw dash" style="color:var(' + r.c + ')"></span>'
+        : '<span class="sw" style="background:var(' + r.c + ')"></span>';
+      return '<div class="row">' + sw + '<span>' + r.l + '</span>' +
+             (r.n ? '<span class="ct">' + r.n + '</span>' : '') + '</div>';
+    }).join("");
+  }
+
+  // ---------------------------------------------------------------------- map
+  var map = L.map("map", { zoomControl: true, preferCanvas: true }).setView([37.78, -122.28], 9);
+  var dark = matchMedia("(prefers-color-scheme: dark)").matches;
+  L.tileLayer(
+    "https://{s}.basemaps.cartocdn.com/" + (dark ? "dark_all" : "light_all") + "/{z}/{x}/{y}{r}.png",
+    { maxZoom: 19, attribution: "&copy; OpenStreetMap contributors &copy; CARTO" }
+  ).addTo(map);
+
+  var layers = {};   // segment id -> array of polylines
+  var group = L.layerGroup().addTo(map);
+
+  function styleFor(s) {
+    var isSkip = s.status === "existing" && skipped(s) && !done(s);
+    return {
+      color: colorFor(s),
+      weight: s.status !== "existing" ? 2 : (done(s) ? 4.5 : (isSkip ? 2 : 3)),
+      opacity: s.status !== "existing" ? 0.55 : (isSkip ? 0.45 : (counted(s) ? 0.95 : 0.35)),
+      dashArray: s.status !== "existing" ? "2 6" : (isSkip ? "1 5" : (s.onStreet ? "7 5" : null)),
+      lineCap: "round"
+    };
+  }
+
+  function build() {
+    group.clearLayers();
+    layers = {};
+    SEGMENTS.forEach(function (s) {
+      if (s.status !== "existing" && !optProposed.checked) return;
+      if (s.status === "existing" && facilityOn[facilityKey(s)] === false) return;
+      var arr = [];
+      s.geometry.forEach(function (ring) {
+        var latlngs = ring.map(function (p) { return [p[1], p[0]]; });
+        var pl = L.polyline(latlngs, styleFor(s));
+        pl.on("click", function (e) { L.DomEvent.stop(e); openPanel(s); });
+        pl.on("mouseover", function () { pl.setStyle({ weight: styleFor(s).weight + 3 }); });
+        pl.on("mouseout", function () { pl.setStyle(styleFor(s)); });
+        pl.bindTooltip(s.label + " · " + s.miles.toFixed(2) + " mi", { sticky: true });
+        pl.addTo(group);
+        arr.push(pl);
+      });
+      layers[s.id] = arr;
+    });
+  }
+
+  function restyle() {
+    SEGMENTS.forEach(function (s) {
+      var arr = layers[s.id];
+      if (!arr) return;
+      var st = styleFor(s);
+      arr.forEach(function (pl) { pl.setStyle(st); });
+    });
+  }
+
+  // ------------------------------------------------------------------ panel
+  var current = null;
+  var panel = document.getElementById("panel");
+
+  function openPanel(s) {
+    current = s;
+    panel.classList.add("open");
+    document.getElementById("pTitle").textContent = s.label;
+    document.getElementById("pMeta").textContent =
+      s.miles.toFixed(2) + " mi · " + (s.agency || "unknown agency");
+
+    var tags = [];
+    tags.push(s.status === "existing" ? "Built" : "Not built yet");
+    tags.push(s.onStreet ? "On street" : "Off street");
+    if (s.facility) tags.push(s.facility);
+    if (s.surface && s.surface !== "unknown") tags.push(s.surface);
+    if (s.yearRaw) tags.push("opened " + s.yearRaw);
+    if (skipped(s)) tags.push("skipping");
+    document.getElementById("pTags").innerHTML =
+      tags.map(function (t) { return '<span class="tag">' + t + "</span>"; }).join("");
+
+    drawRecords();
+  }
+
+  var MODE_LABEL = { foot: "On foot", bike: "By bike", other: "Other" };
+  var MODE_VAR = { foot: "--mode-foot", bike: "--mode-bike", other: "--mode-both" };
+
+  function drawRecords() {
+    var rs = bySeg[current.id] || [];
+    document.getElementById("pRecords").innerHTML = rs.map(function (r) {
+      return '<div class="rec">' +
+        '<span class="sw" style="background:var(' + MODE_VAR[r.mode] + ')"></span>' +
+        '<span class="d">' + MODE_LABEL[r.mode] + " · " + (r.date || "date unknown") +
+        (r.notes ? " · " + escapeHtml(r.notes) : "") + "</span>" +
+        '<button class="btn sm" data-del="' + r.id + '">Remove</button></div>';
+    }).join("");
+    document.getElementById("btnSave").textContent =
+      rs.length ? "Add another entry" : "Mark travelled";
+    document.getElementById("btnSkip").textContent =
+      skipped(current) ? "Un-skip" : "Skip this";
+  }
+
+  function escapeHtml(t) {
+    return String(t).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  document.getElementById("pRecords").addEventListener("click", function (e) {
+    var id = e.target.getAttribute && e.target.getAttribute("data-del");
+    if (!id) return;
+    records = records.filter(function (r) { return r.id !== id; });
+    commit();
+    drawRecords();
+  });
+
+  document.getElementById("btnSave").addEventListener("click", function () {
+    var d = document.getElementById("fDate").value;
+    records.push({
+      id: "t_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+      segId: current.id,
+      startM: 0,
+      endM: Math.round(current.miles * M_PER_MILE),
+      mode: document.getElementById("fMode").value,
+      date: d || null,
+      datePrecision: d ? "exact" : "unknown",
+      notes: document.getElementById("fNotes").value.trim(),
+      snapshot: SNAPSHOT,
+      created: new Date().toISOString().slice(0, 10)
+    });
+    document.getElementById("fNotes").value = "";
+    document.getElementById("fDate").value = "";
+    commit();
+    drawRecords();
+  });
+
+  document.getElementById("btnSkip").addEventListener("click", function () {
+    if (!current) return;
+    if (skipped(current)) delete flags[current.id];
+    else flags[current.id] = { skip: true };
+    commit();
+    openPanel(current);
+  });
+
+  document.getElementById("btnClose").addEventListener("click", function () {
+    panel.classList.remove("open"); current = null;
+  });
+
+  // ------------------------------------------------------------------ render
+  function renderStats() {
+    var t = totals();
+    var pc = t.mi ? (t.doneMi / t.mi) * 100 : 0;
+    document.getElementById("heroNum").innerHTML =
+      pc.toFixed(1) + "<small>%</small>";
+    document.getElementById("heroLabel").textContent =
+      "of the " + t.mi.toFixed(0) + " miles you plan to walk" +
+      (optOnStreet.checked ? "" : ", off-street only");
+    document.getElementById("heroBar").style.width = pc.toFixed(2) + "%";
+    document.getElementById("sMiles").textContent = t.doneMi.toFixed(1);
+    document.getElementById("sLeft").textContent = (t.mi - t.doneMi).toFixed(1);
+    document.getElementById("sSegs").textContent = t.doneSegs + " / " + t.segs;
+    document.getElementById("sSkipped").textContent = t.skipMi.toFixed(1);
+    document.getElementById("heroSub").textContent =
+      (t.planned ? (t.doneMi / t.planned) * 100 : 0).toFixed(1) +
+      "% of the full 484-mile planned alignment" +
+      (t.skipMi > 0 && optHideSkipped.checked
+        ? " \u00b7 " + t.skipMi.toFixed(1) + " mi skipped" : "");
+
+    var names = Object.keys(t.byCounty).sort();
+    document.getElementById("counties").innerHTML = names.map(function (n) {
+      var c = t.byCounty[n], p = c.mi ? (c.done / c.mi) * 100 : 0;
+      return '<div class="county"><span class="nm">' + n + "</span>" +
+        '<span class="tr"><i style="width:' + p.toFixed(1) + '%"></i></span>' +
+        '<span class="pc">' + Math.round(p) + "%</span></div>";
+    }).join("");
+  }
+
+  function renderList() {
+    var q = document.getElementById("search").value.trim().toLowerCase();
+    var out = [], county = null;
+    SEGMENTS.forEach(function (s) {
+      if (s.status !== "existing" && !optProposed.checked) return;
+      if (s.status === "existing" && facilityOn[facilityKey(s)] === false) return;
+      if (q && (s.label + " " + (s.agency || "")).toLowerCase().indexOf(q) < 0) return;
+      if (s.county !== county) {
+        county = s.county;
+        out.push('<div class="grp">' + county + " County</div>");
+      }
+      out.push('<div class="item' + (done(s) ? " on" : "") +
+        (skipped(s) && !done(s) ? " skip" : "") +
+        (s.status !== "existing" ? " prop" : "") + '" data-seg="' + s.id + '">' +
+        '<span class="dot"></span><span class="t">' + escapeHtml(s.label) + "</span>" +
+        '<span class="mi">' + s.miles.toFixed(2) + "</span></div>");
+    });
+    document.getElementById("list").innerHTML = out.join("");
+  }
+
+  document.getElementById("list").addEventListener("click", function (e) {
+    var el = e.target.closest("[data-seg]");
+    if (!el) return;
+    var s = byId[el.getAttribute("data-seg")];
+    var arr = layers[s.id];
+    if (arr && arr.length) map.fitBounds(arr[0].getBounds().pad(0.4));
+    openPanel(s);
+  });
+
+  document.getElementById("search").addEventListener("input", renderList);
+
+  function commit() { save(); reindex(); renderAll(); }
+
+  function renderAll() { restyle(); renderStats(); renderList(); drawLegend(); }
+
+  // ----------------------------------------------------------------- controls
+  var optOnStreet = document.getElementById("optOnStreet");
+  var optProposed = document.getElementById("optProposed");
+  var optHideSkipped = document.getElementById("optHideSkipped");
+
+  // Facility filter. Built from whatever classes the snapshot actually contains,
+  // so a future snapshot with a new class does not silently vanish from the map.
+  var facilityOn = {};
+  function facilityKey(s) { return s.facility || "Unclassified"; }
+
+  function buildFacilityFilter() {
+    var mi = {}, order = [];
+    SEGMENTS.forEach(function (s) {
+      if (s.status !== "existing") return;
+      var k = facilityKey(s);
+      if (!(k in mi)) { mi[k] = 0; order.push(k); }
+      mi[k] += s.miles;
+    });
+    order.sort();
+    order.forEach(function (k) { if (!(k in facilityOn)) facilityOn[k] = true; });
+    document.getElementById("facilities").innerHTML = order.map(function (k) {
+      return '<label class="chk"><input type="checkbox" data-fac="' + escapeHtml(k) + '"' +
+        (facilityOn[k] ? " checked" : "") + "><span>" + escapeHtml(k) + "</span>" +
+        '<span class="mi">' + mi[k].toFixed(1) + " mi</span></label>";
+    }).join("");
+  }
+
+  document.getElementById("facilities").addEventListener("change", function (e) {
+    var k = e.target.getAttribute && e.target.getAttribute("data-fac");
+    if (!k) return;
+    facilityOn[k] = e.target.checked;
+    build();
+    renderAll();
+  });
+
+  document.getElementById("viewBtns").addEventListener("click", function (e) {
+    var b = e.target.closest("button[data-view]");
+    if (!b) return;
+    VIEW = b.getAttribute("data-view");
+    [].forEach.call(this.querySelectorAll("button"), function (x) {
+      x.setAttribute("aria-pressed", String(x === b));
+    });
+    renderAll();
+  });
+
+  optOnStreet.addEventListener("change", renderAll);
+  optHideSkipped.addEventListener("change", renderAll);
+
+  document.getElementById("btnSkipOnStreet").addEventListener("click", function () {
+    SEGMENTS.forEach(function (s) {
+      if (s.status === "existing" && s.onStreet && !done(s)) flags[s.id] = { skip: true };
+    });
+    commit();
+  });
+  document.getElementById("btnClearSkips").addEventListener("click", function () {
+    flags = {};
+    commit();
+  });
+  optProposed.addEventListener("change", function () { build(); renderAll(); });
+
+  // ------------------------------------------------------------ import/export
+  document.getElementById("btnExport").addEventListener("click", function () {
+    var today = new Date().toISOString().slice(0, 10);
+    var payload = {
+      _metadata: {
+        file: "bay_trail_traversals_v1.0_" + today.replace(/-/g, "") + ".json",
+        version: "1.0",
+        author: "Samuel Cao",
+        created: "2026-09-06",
+        last_updated: today,
+        description: "Personal record of SF Bay Trail segments travelled.",
+        snapshot: SNAPSHOT,
+        ai_update: "Update last_updated and version. Append to _changelog."
+      },
+      _changelog: [{ version: "1.0", date: today, note: "Exported from the Bay Trail map." }],
+      records: records,
+      flags: flags
+    };
+    var blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = payload._metadata.file;
+    a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+  });
+
+  document.getElementById("btnImport").addEventListener("click", function () {
+    document.getElementById("fileIn").click();
+  });
+  document.getElementById("fileIn").addEventListener("change", function (e) {
+    var f = e.target.files[0];
+    if (!f) return;
+    var fr = new FileReader();
+    fr.onload = function () {
+      try {
+        var p = JSON.parse(fr.result);
+        var incoming = p.records || [];
+        var seen = {};
+        records.forEach(function (r) { seen[r.id] = true; });
+        incoming.forEach(function (r) { if (!seen[r.id]) records.push(r); });
+        Object.keys(p.flags || {}).forEach(function (k) { flags[k] = p.flags[k]; });
+        commit();
+        setSaveState("Imported " + incoming.length + " entries · " + records.length + " total");
+      } catch (err) {
+        setSaveState("That file could not be read as a record export.");
+      }
+    };
+    fr.readAsText(f);
+    e.target.value = "";
+  });
+
+  // -------------------------------------------------------------------- boot
+  load();
+  reindex();
+  document.getElementById("onStreetMi").textContent =
+    " (" + DATA.stats.existingOnStreetMiles.toFixed(0) + " mi)";
+  document.getElementById("snapNote").textContent = " Snapshot " + SNAPSHOT + ".";
+  buildFacilityFilter();
+  build();
+  renderAll();
+  save();
+
+  var all = [];
+  SEGMENTS.forEach(function (s) {
+    s.geometry.forEach(function (ring) {
+      ring.forEach(function (p) { all.push([p[1], p[0]]); });
+    });
+  });
+  if (all.length) map.fitBounds(L.latLngBounds(all).pad(0.02));
+})();
+</script>
+
+<!-- CHANGELOG
+  v1.0 (2026-09-06): Initial release. Leaflet map of the MTC Bay Trail spine,
+    whole-segment marking with span-shaped records, four colour views with
+    swapping legends, per-county progress, on-street toggle, checklist with
+    search, localStorage autosave and versioned JSON import/export.
+  v1.1 (2026-09-06): Vendored Leaflet so the page works offline. Added a
+    per-segment skip flag with bulk on-street skipping, so the headline can
+    measure the trail you intend to walk rather than the official alignment.
+    Surfaced the Caltrans bikeway class on each segment, and added a facility
+    filter so classes can be included or excluded from both the map and the total.
+-->
+</body>
+</html>
