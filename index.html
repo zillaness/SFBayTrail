@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!--
   file: index.html
-  version: 1.1
+  version: 1.2
   author: Samuel Cao
   created: 2026-09-06
   last_updated: 2026-09-06
@@ -227,6 +227,13 @@ label.chk input { accent-color: var(--accent); }
 .foot a { color: var(--text-muted); }
 
 .leaflet-container { background: var(--surface-2); font: inherit; }
+/* Aerial imagery is busy and mid-toned; knocking it back keeps the trail
+   lines legible without hiding the shoreline the imagery is there to show. */
+.imagery .leaflet-tile-pane { filter: saturate(.55) brightness(.72) contrast(1.05); }
+.imagery .leaflet-control-layers, .imagery .credit { color: var(--text-secondary); }
+.leaflet-control-layers { border-radius: 8px !important; border: 1px solid var(--border) !important;
+  box-shadow: var(--shadow) !important; background: var(--surface) !important; }
+.leaflet-control-layers-list { padding: 4px 8px 4px 4px; font-size: 12.5px; }
 .credit {
   position: absolute; left: 10px; bottom: 10px; z-index: 800;
   background: color-mix(in srgb, var(--surface) 88%, transparent);
@@ -336,7 +343,7 @@ label.chk input { accent-color: var(--accent); }
 
   <div style="position:relative">
     <div id="map"></div>
-    <div class="credit">Trail data: MTC · Basemap: CARTO / OpenStreetMap</div>
+    <div class="credit">Trail data: MTC · Basemap: CARTO, Esri or OpenTopoMap</div>
     <div id="panel">
       <h3 id="pTitle"></h3>
       <div class="meta" id="pMeta"></div>
@@ -558,19 +565,46 @@ label.chk input { accent-color: var(--accent); }
   // ---------------------------------------------------------------------- map
   var map = L.map("map", { zoomControl: true, preferCanvas: true }).setView([37.78, -122.28], 9);
   var dark = matchMedia("(prefers-color-scheme: dark)").matches;
-  L.tileLayer(
-    "https://{s}.basemaps.cartocdn.com/" + (dark ? "dark_all" : "light_all") + "/{z}/{x}/{y}{r}.png",
-    { maxZoom: 19, attribution: "&copy; OpenStreetMap contributors &copy; CARTO" }
-  ).addTo(map);
+
+  var CARTO_ATTR = "&copy; OpenStreetMap contributors &copy; CARTO";
+  var bases = {
+    "Map": L.tileLayer(
+      "https://{s}.basemaps.cartocdn.com/" + (dark ? "dark_all" : "light_all") + "/{z}/{x}/{y}{r}.png",
+      { maxZoom: 19, attribution: CARTO_ATTR }),
+    "Satellite": L.tileLayer(
+      "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+      { maxZoom: 19, attribution: "Imagery &copy; Esri, Maxar, Earthstar Geographics" }),
+    "Terrain": L.tileLayer(
+      "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
+      { maxZoom: 17, attribution: "&copy; OpenTopoMap, &copy; OpenStreetMap contributors" })
+  };
+
+  var BASE_KEY = "bayTrailBasemap";
+  var startBase = "Map";
+  try { startBase = localStorage.getItem(BASE_KEY) || "Map"; } catch (e) {}
+  if (!bases[startBase]) startBase = "Map";
+  bases[startBase].addTo(map);
+  L.control.layers(bases, null, { position: "topright", collapsed: false }).addTo(map);
+
+  function applyBaseClass(name) {
+    document.getElementById("map").classList.toggle("imagery", name === "Satellite");
+  }
+  applyBaseClass(startBase);
+  map.on("baselayerchange", function (e) {
+    applyBaseClass(e.name);
+    try { localStorage.setItem(BASE_KEY, e.name); } catch (err) {}
+    if (typeof restyle === "function") restyle();
+  });
 
   var layers = {};   // segment id -> array of polylines
   var group = L.layerGroup().addTo(map);
 
   function styleFor(s) {
     var isSkip = s.status === "existing" && skipped(s) && !done(s);
+    var bump = document.getElementById("map").classList.contains("imagery") ? 1 : 0;
     return {
       color: colorFor(s),
-      weight: s.status !== "existing" ? 2 : (done(s) ? 4.5 : (isSkip ? 2 : 3)),
+      weight: (s.status !== "existing" ? 2 : (done(s) ? 4.5 : (isSkip ? 2 : 3))) + bump,
       opacity: s.status !== "existing" ? 0.55 : (isSkip ? 0.45 : (counted(s) ? 0.95 : 0.35)),
       dashArray: s.status !== "existing" ? "2 6" : (isSkip ? "1 5" : (s.onStreet ? "7 5" : null)),
       lineCap: "round"
@@ -901,6 +935,9 @@ label.chk input { accent-color: var(--accent); }
     measure the trail you intend to walk rather than the official alignment.
     Surfaced the Caltrans bikeway class on each segment, and added a facility
     filter so classes can be included or excluded from both the map and the total.
+  v1.2 (2026-09-06): Added a basemap switcher (map, satellite imagery, terrain)
+    with the choice remembered, imagery knocked back so trail lines stay legible
+    over it, and slightly heavier lines while imagery is active.
 -->
 </body>
 </html>
